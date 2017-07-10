@@ -9,6 +9,7 @@ This CHANGELOG follows the format listed at [Keep A Changelog](http://keepachang
 
 ### Fixed
 - PR template spelling (@majormoses)
+- check-rabbitmq-node-health.rb: Fixes picks only first nodes in the cluster (@rocdove)
 
 ## [3.2.0] - 2017-06-20
 ### Added

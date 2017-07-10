@@ -135,6 +135,16 @@ class CheckRabbitMQNodeHealth < Sensu::Plugin::Check::CLI
     end
   end
 
+  def _get_state(status, new)
+    if status == 'ok'
+      return new
+    elsif status == 'warning' and new == 'critical'
+      return new
+    else
+      return status
+    end
+  end
+
   def node_healthy?
     host       = config[:host]
     port       = config[:port]
@@ -155,62 +165,68 @@ class CheckRabbitMQNodeHealth < Sensu::Plugin::Check::CLI
     begin
       url_prefix = ssl ? 'https' : 'http'
       resource = RestClient::Resource.new(
-        "#{url_prefix}://#{host}:#{port}/api/nodes",
+        "#{url_prefix}://#{host}:#{port}/api/nodes/rabbit@#{host}",
         user: username,
         password: password,
         verify_ssl: !verify_ssl
       )
       # Parse our json data
-      nodeinfo = JSON.parse(resource.get)[0]
+      nodeinfo = JSON.parse(resource.get)
 
       # Determine % memory consumed
       pmem = format('%.2f', nodeinfo['mem_used'].fdiv(nodeinfo['mem_limit']) * 100)
       # Determine % sockets consumed
       psocket = format('%.2f', nodeinfo['sockets_used'].fdiv(nodeinfo['sockets_total']) * 100)
       # Determine % file descriptors consumed
-      # Non-numeric value fails silently to handle fd_used = 'unknown' on OSX
+      # Non-numeric value fd_used = 'unknown' on OSX
       if nodeinfo['fd_used'].is_a?(Numeric)
         pfd = format('%.2f', nodeinfo['fd_used'].fdiv(nodeinfo['fd_total']) * 100)
       end
 
       # build status and message
       status = 'ok'
-      message = 'Server is healthy'
+      message = ''
 
-      # criticals
       if pmem.to_f >= config[:memcrit]
-        message = "Memory usage is critical: #{pmem}%"
-        status = 'critical'
-      elsif psocket.to_f >= config[:socketcrit]
-        message = "Socket usage is critical: #{psocket}%"
-        status = 'critical'
-      elsif pfd.to_f >= config[:fdcrit]
-        message = "File Descriptor usage is critical: #{pfd}%"
-        status = 'critical'
-      # warnings
+        message += "Memory usage is critical: #{pmem}%;"
+        status = _get_state(status, 'critical')
       elsif pmem.to_f >= config[:memwarn]
-        message = "Memory usage is at warning: #{pmem}%"
-        status = 'warning'
+        message += "Memory usage is at warning: #{pmem}%;"
+        status = _get_state(status, 'warning')
+      end
+
+      if psocket.to_f >= config[:socketcrit]
+        message += "Socket usage is critical: #{psocket}%;"
+        status = _get_state(status, 'critical')
       elsif psocket.to_f >= config[:socketwarn]
-        message = "Socket usage is at warning: #{psocket}%"
-        status = 'warning'
-      elsif pfd.to_f >= config[:fdwarn]
-        message = "File Descriptor usage is at warning: #{pfd}%"
-        status = 'warning'
+        message += "Socket usage is at warning: #{psocket}%;"
+        status = _get_state(status, 'warning')
+      end
+
+      # Non-numeric value don't deal on OSX
+      if pfd.nil?
+        if pfd.to_f >= config[:fdcrit]
+          message += "File Descriptor usage is critical: #{pfd}%;"
+          status = _get_state(status, 'critical')
+        elsif pfd.to_f >= config[:fdwarn]
+          message += "File Descriptor usage is at warning: #{pfd}%;"
+          status = _get_state(status, 'warning')
+        end
       end
 
       # If we are set to watch alarms then watch those and set status and messages accordingly
       if config[:watchalarms] == 'true'
         if nodeinfo['mem_alarm'] == true
-          status = 'critical'
+          status = _get_state(status, 'critical')
           message += ' Memory Alarm ON'
         end
 
         if nodeinfo['disk_free_alarm'] == true
-          status = 'critical'
+          status = _get_state(status, 'critical')
           message += ' Disk Alarm ON'
         end
       end
+      message = 'Server is healthy.' if status == 'ok'
 
       { 'status' => status, 'message' => message }
     rescue Errno::ECONNREFUSED => e
